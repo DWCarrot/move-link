@@ -1,0 +1,123 @@
+#!/usr/bin/bash
+
+GREEN="\e[32m"
+ENDCOLOR="\e[0m"
+EXEC=true
+
+display_help() {
+    echo "Usage: $(basename "$0") [-d DEST_DIR] [-r SOURCE_ROOT] SOURCE_FOLDER ..."
+    echo "move SOURCE_FOLDER to DEST_DIR (or merge-overwrite if the folder exsits) and build symbolic link back to original SOURCE_FOLDER location."
+    echo "  -d DEST_DIR                  specific where the origial folder should be moved to; default is \$(pwd)"
+    echo "  -r SOURCE_ROOT               if set, treat DEST_DIR as root and build the same relative path to root"
+    echo
+}
+
+execute_move_link() { #1 src-parent   #2 tgt   #3 dst-parent
+    full_src="$1/$2"
+    full_dst="$3/$2"
+    echo "# task $4: $full_src <== $full_dst"
+    echo -e '\t' mkdir -p "$3"
+    if $EXEC
+    then
+        mkdir -p "$3"
+    fi
+    if [[ -d "$full_dst" ]]
+    then
+        echo -e '\t'  cp -RT "$full_src" "$full_dst"
+        if $EXEC
+        then
+            cp -RT "$full_src" "$full_dst"
+        fi
+        echo -e '\t'  rm -r "$full_src"
+        if $EXEC
+        then
+            rm -r "$full_src"
+        fi
+    else
+        echo -e '\t'  mv "$full_src" "$3"
+        if $EXEC
+        then
+            mv "$full_src" "$3"
+        fi
+    fi
+    echo -e '\t'  ln -s "$full_dst" "$full_src"
+    if $EXEC
+    then
+        ln -s "$full_dst" "$full_src"
+    fi
+    echo
+}
+
+dst_dir="$(pwd)"
+root_dir=""
+while getopts "hd:r:" opt
+do
+    case "$opt" in
+        "h")
+            display_help
+            exit 0
+            ;;
+        "d")
+            dst_dir="$OPTARG"
+            ;;
+        "r")
+            if [[ -d "$OPTARG" ]]
+            then
+                root_dir="$OPTARG"
+            fi
+            ;;
+        *)
+            echo "?" "opt"
+            exit 1
+    esac
+done
+
+echo "d=$dst_dir"
+echo "r=$root_dir"
+shift $((OPTIND - 1))
+
+declare -a prepared_src
+declare -a prepared_dst
+declare -a prepared_tgt
+
+for src in "$@"; do
+    if [[ -d "$src" ]] 
+    then
+        p_src="$(cd "$(dirname "$src")"; pwd)"
+        p_tgt="$(basename "$src")"
+        p_dst="$dst_dir"
+        if [[ -n "$root_dir" ]]
+        then
+            rpath="$(realpath "--relative-base=$root_dir" "$p_src")"
+            if [[ "$rpath" == "$p_src" ]]
+            then
+                echo "ignore folder: $src"
+                continue
+            fi
+            p_dst="$p_dst/$rpath"
+        fi
+        prepared_src+=($p_src)
+        prepared_tgt+=($p_tgt)
+        prepared_dst+=($p_dst)
+    else
+        echo "ignore file: $src"
+        continue
+    fi
+done
+
+for ((i=0;i<${#prepared_src[@]};i++));
+do
+    echo -e "${prepared_src[i]}/${GREEN}${prepared_tgt[i]}${ENDCOLOR} <== ${prepared_dst[i]}/${GREEN}${prepared_tgt[i]}${ENDCOLOR}"
+done
+
+read -p "Confirm to execute ? (Y/n) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]
+then
+    exit 1
+fi
+
+for ((i=0;i<${#prepared_src[@]};i++));
+do
+    execute_move_link "${prepared_src[i]}" "${prepared_tgt[i]}" "${prepared_dst[i]}" $((i+1))
+done
